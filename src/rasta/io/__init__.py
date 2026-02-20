@@ -1,11 +1,15 @@
-"""I/O helpers producing canonical datasets."""
+"""I/O helpers and HydroStar readers."""
 
 from __future__ import annotations
 
 import pandas as pd
-import xarray as xr
 
-from .rao import RAOSet
+from ..rao import RAOSet
+from .hydrostar import (
+    read_hydrostar_distributed_loads,
+    read_hydrostar_rao,
+    read_hydrostar_raos,
+)
 
 
 def from_dataframe(df: pd.DataFrame, *, attrs: dict) -> RAOSet:
@@ -22,3 +26,12 @@ def from_dataframe(df: pd.DataFrame, *, attrs: dict) -> RAOSet:
 
 def to_dataframe(raoset: RAOSet) -> pd.DataFrame:
     return raoset.dataset[["rao"]].to_dataframe().reset_index()
+
+
+__all__ = [
+    "from_dataframe",
+    "to_dataframe",
+    "read_hydrostar_rao",
+    "read_hydrostar_raos",
+    "read_hydrostar_distributed_loads",
+]
