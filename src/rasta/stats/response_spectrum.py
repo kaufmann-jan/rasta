@@ -8,7 +8,15 @@ import numpy as np
 import xarray as xr
 
 from ..rao import RAOSet
-from ..spectra import bretschneider, goda, jonswap, pierson_moskowitz, spreading_cos2, spreading_cos4
+from ..spectra import (
+    bretschneider,
+    goda,
+    jonswap,
+    pierson_moskowitz,
+    spreading_cos2s_full,
+    spreading_cosN_half,
+    spreading_mitsuyasu,
+)
 
 _EVEN_RESP = {"surge", "heave", "pitch", "Fx", "Fz", "My"}
 _ODD_RESP = {"sway", "roll", "yaw", "Fy", "Mx", "Mz"}
@@ -28,7 +36,7 @@ def _default_omega_grid(
 ) -> xr.DataArray:
     freq_vals = np.asarray(rs.dataset.coords["freq"].values, dtype=float)
     omin = max(0.05, float(freq_vals.min())) if omega_min is None else float(omega_min)
-    omax = float(freq_vals.max()) if omega_max is None else float(omega_max)
+    omax = 4.0 if omega_max is None else float(omega_max)
 
     if omax <= omin:
         raise ValueError("omega_max must be greater than omega_min")
@@ -179,6 +187,52 @@ def _wave_spectrum(
     raise ValueError("spectrum_model must be one of: bretschneider, pm, jonswap, goda")
 
 
+def _build_directional_spreading(
+    dir_deg: xr.DataArray,
+    freq: xr.DataArray,
+    *,
+    mean_dir_deg: float,
+    spreading: str,
+    tp: float,
+    spreading_kwargs: dict | None,
+) -> xr.DataArray:
+    """Build chapter-4 directional spreading on the provided direction grid."""
+    key = spreading.lower()
+    kw = dict(spreading_kwargs or {})
+
+    if key == "cos2s_full":
+        s = float(kw.pop("s", 1.0))
+        if kw:
+            raise ValueError(f"unsupported spreading_kwargs for cos2s_full: {sorted(kw.keys())}")
+        return spreading_cos2s_full(dir_deg, mean_dir=mean_dir_deg, s=s, dir_unit="deg")
+
+    if key == "cosn_half":
+        N = float(kw.pop("N", 2.0))
+        if kw:
+            raise ValueError(f"unsupported spreading_kwargs for cosN_half: {sorted(kw.keys())}")
+        return spreading_cosN_half(dir_deg, mean_dir=mean_dir_deg, N=N, dir_unit="deg")
+
+    if key == "mitsuyasu":
+        #if "s_p" not in kw:
+        #    raise ValueError("spreading_kwargs for mitsuyasu must include 's_p'")
+        s_p = float(kw.pop("s_p",10.0))
+        omega_p = kw.pop("omega_p", None)
+        tp_eff = kw.pop("tp", tp)
+        if kw:
+            raise ValueError(f"unsupported spreading_kwargs for mitsuyasu: {sorted(kw.keys())}")
+        return spreading_mitsuyasu(
+            dir_deg,
+            freq,
+            mean_dir=mean_dir_deg,
+            s_p=s_p,
+            omega_p=omega_p,
+            tp=tp_eff,
+            dir_unit="deg",
+        )
+
+    raise ValueError("spreading must be one of: cos2s_full, cosN_half, mitsuyasu")
+
+
 def compute_response_spectrum(
     rs: RAOSet,
     *,
@@ -188,7 +242,7 @@ def compute_response_spectrum(
     mean_dir: float,
     spectrum_model: str = "jonswap",
     spectrum_kwargs: dict | None = None,
-    spreading: str | None = None,
+    spreading: str | None = "cos2s_full",
     spreading_kwargs: dict | None = None,
     symmetry: bool = True,
     omega_grid: xr.DataArray | None = None,
@@ -197,7 +251,66 @@ def compute_response_spectrum(
     domega: float | None = None,
     rao_tail_extrapolation: str = "zero_at_omega_max",
 ) -> xr.Dataset:
-    """Compute response spectrum S_r(omega) for selected response channels."""
+    """Compute response spectrum S_r(omega) for selected response channels.
+    
+    compute_response_spectrum uses one frequency integration grid (freq, rad/s). You control it in two ways:
+    
+      1. omega_grid (explicit grid, highest priority)
+      2. omega_min/omega_max/domega (build grid internally)
+    
+      Behavior:
+    
+      - If omega_grid is provided:
+          - It is used directly.
+          - omega_min, omega_max, domega are ignored.
+      - If omega_grid is None:
+          - Grid is built as:
+              - omega_min = max(0.05, min(rs.freq)) unless you set it
+              - omega_max = max(rs.freq) unless you set it
+              - domega = min(0.02, (omega_max-omega_min)/2000) unless you set it
+          - Then freq = np.arange(omega_min, omega_max + 0.5*domega, domega)
+    
+      Examples:
+    
+      Use an explicit custom grid:
+    
+      omega = xr.DataArray(
+          np.linspace(0.05, 4.0, 1500),
+          dims=("freq",),
+          coords={"freq": np.linspace(0.05, 4.0, 1500)},
+      )
+    
+      out = compute_response_spectrum(
+          rs,
+          resp="heave",
+          hs=3.0,
+          tp=8.0,
+          mean_dir=180.0,
+          omega_grid=omega,
+      )
+    
+      Use min/max/step only:
+    
+      out = compute_response_spectrum(
+          rs,
+          resp="heave",
+          hs=3.0,
+          tp=8.0,
+          mean_dir=180.0,
+          omega_min=0.05,
+          omega_max=4.0,
+          domega=0.01,
+      )
+    
+      Practical guidance:
+    
+      - Prefer omega_grid when you need exact reproducibility/comparison with another tool.
+      - Use omega_max above RAO max freq if you want explicit tail handling; with default rao_tail_extrapolation="zero_at_omega_max", RAO magnitude tapers to zero at grid max.
+      - Smaller domega improves accuracy but increases runtime.
+
+    
+    
+    """
     if hs <= 0.0 or tp <= 0.0:
         raise ValueError("hs and tp must be > 0")
 
@@ -223,27 +336,30 @@ def compute_response_spectrum(
         h_mean = rao_w.isel(dir=idx)
         s_r = (np.abs(h_mean) ** 2) * sea
     else:
-        spread_key = spreading.lower()
-        if spread_key == "cos2":
-            D = spreading_cos2(rao_w.coords["dir"], mean_dir=mean_dir_mod, **(spreading_kwargs or {}))
-        elif spread_key == "cos4":
-            D = spreading_cos4(rao_w.coords["dir"], mean_dir=mean_dir_mod, **(spreading_kwargs or {}))
-        else:
-            raise ValueError("spreading must be one of: cos2, cos4")
+        D = _build_directional_spreading(
+            rao_w.coords["dir"],
+            omega,
+            mean_dir_deg=mean_dir_mod,
+            spreading=spreading,
+            tp=tp,
+            spreading_kwargs=spreading_kwargs,
+        )
 
         integrand = (np.abs(rao_w) ** 2) * sea * D
-        theta = np.deg2rad(np.asarray(integrand.coords["dir"].values, dtype=float))
-
-        s_r = xr.apply_ufunc(
-            np.trapezoid,
-            integrand,
-            xr.DataArray(theta, dims=("dir",), coords={"dir": integrand.coords["dir"]}),
-            input_core_dims=[["dir"], ["dir"]],
-            output_core_dims=[[]],
-            vectorize=True,
-        )
-        if "freq" not in s_r.dims:
-            s_r = s_r.expand_dims(freq=omega.values)
+        if int(integrand.sizes.get("dir", 0)) == 1:
+            s_r = integrand.isel(dir=0, drop=True)
+        else:
+            theta = np.deg2rad(np.asarray(integrand.coords["dir"].values, dtype=float))
+            s_r = xr.apply_ufunc(
+                np.trapezoid,
+                integrand,
+                xr.DataArray(theta, dims=("dir",), coords={"dir": integrand.coords["dir"]}),
+                input_core_dims=[["dir"], ["dir"]],
+                output_core_dims=[[]],
+                vectorize=True,
+            )
+            if "freq" not in s_r.dims:
+                s_r = s_r.expand_dims(freq=omega.values)
 
     # Canonical order: resp, (any extra dims), freq
     non_freq_dims = [d for d in s_r.dims if d not in {"resp", "freq"}]

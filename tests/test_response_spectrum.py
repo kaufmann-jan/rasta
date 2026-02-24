@@ -29,7 +29,7 @@ def test_directional_spreading_option_works() -> None:
     rs = read_hydrostar_rao("tests/hydrostar/heave.rao")
 
     uni = compute_response_spectrum(rs, resp="heave", hs=3.0, tp=8.0, mean_dir=180.0, spreading=None)
-    spread = compute_response_spectrum(rs, resp="heave", hs=3.0, tp=8.0, mean_dir=180.0, spreading="cos2")
+    spread = compute_response_spectrum(rs, resp="heave", hs=3.0, tp=8.0, mean_dir=180.0, spreading="cos2s_full")
 
     assert uni["S_r"].dims == spread["S_r"].dims
     assert np.all(np.isfinite(spread["S_r"].values))
@@ -80,3 +80,36 @@ def test_rao_tail_extrapolation_to_zero() -> None:
     tail = float(out["S_r"].isel(resp=0, freq=-1).values)
     ref = float(out["S_r"].isel(resp=0, freq=10).values)
     assert tail < ref
+
+
+def test_spreading_support_excludes_outside_plus_minus_90_for_cosN_half() -> None:
+    freq = np.array([0.8, 1.0, 1.2], dtype=float)
+    direction = np.array([0.0, 60.0, 120.0, 180.0, 240.0, 300.0], dtype=float)
+    resp = np.array(["heave"], dtype=object)
+
+    # Very large RAO outside support window around mean_dir=180 (0, 60, 300).
+    # In-window directions (120, 180, 240) stay at 1.
+    amp = np.array([100.0, 100.0, 1.0, 1.0, 1.0, 100.0], dtype=float)
+    data = np.repeat(amp.reshape(1, direction.size, 1), freq.size, axis=2).astype(np.complex128)
+
+    ds = xr.Dataset(
+        {"rao": (("resp", "dir", "freq"), data)},
+        coords={"resp": resp, "dir": direction, "freq": freq},
+        attrs=dict(REQUIRED_ATTRS),
+    )
+    rs = RAOSet(ds)
+
+    out = compute_response_spectrum(
+        rs,
+        resp="heave",
+        hs=3.0,
+        tp=8.0,
+        mean_dir=180.0,
+        spreading="cosN_half",
+        spreading_kwargs={"N": 2.0},
+        omega_grid=xr.DataArray(freq, dims=("freq",), coords={"freq": freq}),
+    )
+
+    # If outside-window directions were included, result would be very large.
+    val = float(out["S_r"].isel(resp=0, freq=1).values)
+    assert val < 100.0

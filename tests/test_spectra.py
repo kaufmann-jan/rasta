@@ -10,8 +10,9 @@ from rasta.spectra import (
     jonswap,
     make_directional_spectrum,
     pierson_moskowitz,
-    spreading_cos2,
-    spreading_cos4,
+    spreading_cos2s_full,
+    spreading_cosN_half,
+    spreading_mitsuyasu,
 )
 
 
@@ -40,8 +41,8 @@ def test_spectrum_output_shapes_and_coords() -> None:
         assert np.issubdtype(s.coords["freq"].dtype, np.floating)
 
     direction = np.arange(0.0, 360.0 + 15.0, 15.0)
-    d2 = spreading_cos2(direction, mean_dir=180.0)
-    d4 = spreading_cos4(direction, mean_dir=180.0)
+    d2 = spreading_cos2s_full(direction, mean_dir=180.0, s=1.0)
+    d4 = spreading_cosN_half(direction, mean_dir=180.0, N=4.0)
     assert d2.dims == ("dir",)
     assert d4.dims == ("dir",)
     assert np.issubdtype(d2.coords["dir"].dtype, np.floating)
@@ -70,12 +71,29 @@ def test_spreading_normalization() -> None:
     th = np.deg2rad(direction)
 
     for fn in (
-        lambda: spreading_cos2(direction, mean_dir=180.0),
-        lambda: spreading_cos4(direction, mean_dir=180.0),
+        lambda: spreading_cos2s_full(direction, mean_dir=180.0, s=1.0),
+        lambda: spreading_cosN_half(direction, mean_dir=180.0, N=4.0),
     ):
         d = fn()
         integral = float(np.trapezoid(d.values, th))
         assert np.isclose(integral, 1.0, rtol=1e-3, atol=1e-3)
+
+
+def test_spreading_support_cosN_half_is_plus_minus_90_deg() -> None:
+    direction = np.arange(0.0, 360.0, 10.0)
+    d = spreading_cosN_half(direction, mean_dir=180.0, N=2.0)
+    # 180 +/- 90 => support in [90, 270], endpoints may be zero.
+    assert float(d.sel(dir=0.0)) == 0.0
+    assert float(d.sel(dir=80.0)) == 0.0
+    assert float(d.sel(dir=280.0)) == 0.0
+    assert float(d.sel(dir=180.0)) > 0.0
+
+
+def test_spreading_support_cos2s_full_is_plus_minus_180_deg() -> None:
+    direction = np.arange(0.0, 360.0, 10.0)
+    d = spreading_cos2s_full(direction, mean_dir=180.0, s=1.0)
+    assert float(d.sel(dir=0.0)) > 0.0
+    assert float(d.sel(dir=180.0)) > 0.0
 
 
 def test_directional_spectrum_energy_recovery() -> None:
@@ -83,7 +101,7 @@ def test_directional_spectrum_energy_recovery() -> None:
     direction = np.arange(0.0, 360.0 + 15.0, 15.0)
 
     s_omega = jonswap(freq, hs=3.0, tp=8.0)
-    d_dir = spreading_cos2(direction, mean_dir=200.0)
+    d_dir = spreading_cos2s_full(direction, mean_dir=200.0, s=1.0)
 
     s2d = directional_spectrum(freq, direction, S_omega=s_omega, D_dir=d_dir)
     assert s2d.dims == ("dir", "freq")
@@ -95,7 +113,7 @@ def test_directional_spectrum_energy_recovery() -> None:
 def test_circular_mean_direction_wrap() -> None:
     direction = np.arange(0.0, 360.0 + 10.0, 10.0)
     mean_dir = 350.0
-    d = spreading_cos4(direction, mean_dir=mean_dir)
+    d = spreading_cosN_half(direction, mean_dir=mean_dir, N=4.0)
 
     peak_dir = float(d.coords["dir"].values[int(np.argmax(d.values))])
     assert _circ_dist_deg(peak_dir, mean_dir) <= 10.0
@@ -117,9 +135,20 @@ def test_make_directional_spectrum_wrapper() -> None:
         hs=3.0,
         tp=8.0,
         mean_dir=170.0,
-        spreading="cos4",
+        spreading="cosN_half",
+        N=4.0,
     )
 
     assert s2d.dims == ("dir", "freq")
     assert "dir" in s2d.coords
     assert "freq" in s2d.coords
+
+
+def test_mitsuyasu_spreading_normalization_per_frequency() -> None:
+    direction = np.arange(0.0, 360.0 + 15.0, 15.0)
+    freq = np.linspace(0.2, 2.0, 50)
+    d = spreading_mitsuyasu(direction, freq, mean_dir=180.0, s_p=10.0, tp=8.0)
+    assert d.dims == ("dir", "freq")
+    th = np.deg2rad(direction)
+    integ = np.trapezoid(d.values, th, axis=0)
+    assert np.allclose(integ, 1.0, rtol=1e-3, atol=1e-3)

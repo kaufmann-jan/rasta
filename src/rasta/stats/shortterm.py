@@ -24,11 +24,33 @@ def significant_amplitude(raoset: RAOSet, spectrum: xr.DataArray) -> xr.DataArra
 
 
 def shortterm_statistics(S_r: xr.DataArray, *, duration_s: float = 3600.0) -> xr.Dataset:
-    """Compute short-term spectral moments and narrowband extreme estimates.
+    """Compute short-term statistics from a response spectrum.
+
+    The function assumes a linear, Gaussian, narrowband process and computes
+    spectral moments and extreme-value proxies from `S_r(omega)`.
 
     Parameters
     - `S_r`: response spectrum over `freq` (may include extra dims such as `resp`)
     - `duration_s`: sea-state duration in seconds
+
+    Returns
+    - `xr.Dataset` with:
+      - `m0 = ∫ S_r dω`: zeroth moment (variance)
+      - `m1 = ∫ ω S_r dω`: first moment
+      - `m2 = ∫ ω² S_r dω`: second moment
+      - `sigma = sqrt(m0)`: standard deviation of the response
+      - `rms = sigma`: root-mean-square response
+      - `nu0 = (1/(2π)) * sqrt(m2/m0)`: mean zero-upcrossing rate [1/s]
+      - `Tz = 1/nu0 = 2π * sqrt(m0/m2)`: mean zero-upcrossing period [s]
+      - `Ncycles = duration_s / Tz`: expected number of cycles in duration
+      - `X_mpm = sigma * sqrt(2 ln(Ncycles))`: most probable maximum in duration
+      - `X_mean_max ≈ sigma * (sqrt(2 ln N) + 0.5772/sqrt(2 ln N))`:
+        expected maximum in duration (Euler-Mascheroni correction)
+      - `X_sig = 4*sigma`: significant-amplitude proxy (commonly used engineering metric)
+
+    Notes
+    - Returned amplitudes (`X_mpm`, `X_mean_max`, `X_sig`, `sigma`, `rms`) are in the
+      same response units as the RAO response channel represented by `S_r`.
     """
     if duration_s <= 0.0:
         raise ValueError("duration_s must be > 0")

@@ -11,13 +11,13 @@ from .scatter import (
 from .spectra import (
     bretschneider,
     directional_spectrum,
-    directional_spreading_cos2n,
     goda,
     jonswap,
     make_directional_spectrum,
     pierson_moskowitz,
-    spreading_cos2,
-    spreading_cos4,
+    spreading_cos2s_full,
+    spreading_cosN_half,
+    spreading_mitsuyasu,
 )
 from .stats.longterm import longterm_statistics
 from .stats.response_spectrum import compute_response_spectrum, extend_symmetric_raos
@@ -35,9 +35,9 @@ __all__ = [
     "pierson_moskowitz",
     "jonswap",
     "goda",
-    "spreading_cos2",
-    "spreading_cos4",
-    "directional_spreading_cos2n",
+    "spreading_cos2s_full",
+    "spreading_cosN_half",
+    "spreading_mitsuyasu",
     "directional_spectrum",
     "make_directional_spectrum",
     "compute_response_spectrum",

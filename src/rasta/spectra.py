@@ -201,85 +201,157 @@ def goda(
     return s
 
 
-def _spreading_cosn(
-    direction: xr.DataArray | np.ndarray | list[float],
-    *,
-    mean_dir: float,
-    power: int,
-    dir_unit: str = "deg",
-) -> xr.DataArray:
+def _dir_theta(direction: xr.DataArray | np.ndarray | list[float], *, dir_unit: str) -> xr.DataArray:
     d = _as_1d_coord_array(direction, dim="dir")
     unit = dir_unit.lower()
-
     if unit == "deg":
-        theta = np.deg2rad(d)
-        theta_mean = np.deg2rad(mean_dir)
-        mean_deg = float(mean_dir)
+        return np.deg2rad(d)
     elif unit == "rad":
-        theta = d
-        theta_mean = float(mean_dir)
-        mean_deg = float(np.rad2deg(mean_dir))
+        return d
     else:
         raise ValueError("dir_unit must be 'deg' or 'rad'")
 
-    delta = (theta - theta_mean + np.pi) % (2.0 * np.pi) - np.pi
-    w = xr.apply_ufunc(np.cos, 0.5 * delta) ** power
-    w = w.where(np.abs(delta) <= np.pi, 0.0)
-    w = w.where(w > 0.0, 0.0)
 
-    denom = np.trapezoid(w.values, theta.values)
-    if not np.isfinite(denom) or denom <= 0.0:
-        raise ValueError("directional spreading normalization failed")
+def _normalize_directional(w: xr.DataArray, theta: xr.DataArray) -> xr.DataArray:
+    if int(theta.sizes.get("dir", 0)) == 1:
+        return xr.ones_like(w, dtype=float)
 
-    D = w / denom
-    D.name = "D_dir"
-    D.attrs["spreading"] = f"cos{power}"
-    D.attrs["mean_dir_deg"] = mean_deg
+    if "freq" in w.dims:
+        denom = xr.apply_ufunc(
+            np.trapezoid,
+            w,
+            theta,
+            input_core_dims=[["dir"], ["dir"]],
+            output_core_dims=[[]],
+            vectorize=True,
+            output_dtypes=[float],
+        )
+        denom = xr.where(denom > 0.0, denom, np.nan)
+        D = w / denom
+    else:
+        denom = float(np.trapezoid(np.asarray(w.values, dtype=float), np.asarray(theta.values, dtype=float)))
+        if not np.isfinite(denom) or denom <= 0.0:
+            raise ValueError("directional spreading normalization failed")
+        D = w / denom
+
+    D = D.where(np.isfinite(D), 0.0)
     return D
 
 
-def spreading_cos2(
+def spreading_cos2s_full(
     direction: xr.DataArray | np.ndarray | list[float],
     *,
     mean_dir: float,
+    s: float = 1.0,
     dir_unit: str = "deg",
 ) -> xr.DataArray:
-    """Cosine-power directional spreading with power 2 (cos2).
+    """Cosine-2s directional spreading with full +/-180° support (ITTC).
 
-    Parameters
-    - `direction`: direction grid [deg] by default
-    - `mean_dir`: mean direction in same unit as `direction`
-    - `dir_unit`: `"deg"` or `"rad"`
-
-    Returns
-    - `xr.DataArray` over `dir`, normalized so integral over theta is 1.
-
-    Reference
-    - https://github.com/kaufmann-jan/popcorn/blob/main/src/popcorn/signal/wave.py
+    Implements D(theta)=C(s) cos^(2s)((theta-theta_mean)/2) for |delta|<=pi,
+    normalized numerically on the provided discrete direction grid.
     """
-    return _spreading_cosn(direction, mean_dir=mean_dir, power=2, dir_unit=dir_unit)
+    if s < 0.0:
+        raise ValueError("s must be >= 0")
+
+    theta = _dir_theta(direction, dir_unit=dir_unit)
+    theta_mean = np.deg2rad(mean_dir) if dir_unit.lower() == "deg" else float(mean_dir)
+    mean_deg = float(mean_dir) if dir_unit.lower() == "deg" else float(np.rad2deg(mean_dir))
+
+    delta = (theta - theta_mean + np.pi) % (2.0 * np.pi) - np.pi
+    w = xr.apply_ufunc(np.cos, 0.5 * delta) ** (2.0 * float(s))
+    w = w.where(np.abs(delta) <= np.pi, 0.0)
+    w = w.where(w > 0.0, 0.0)
+    D = _normalize_directional(w, theta)
+    D.name = "D_dir"
+    D.attrs.update({"spreading": "cos2s_full", "mean_dir_deg": mean_deg, "s": float(s)})
+    return D
 
 
-def spreading_cos4(
+def spreading_cosN_half(
     direction: xr.DataArray | np.ndarray | list[float],
     *,
     mean_dir: float,
+    N: float = 2.0,
     dir_unit: str = "deg",
 ) -> xr.DataArray:
-    """Cosine-power directional spreading with power 4 (cos4).
+    """Cosine-N directional spreading with +/-90° support (ITTC)."""
+    if N < 0.0:
+        raise ValueError("N must be >= 0")
 
-    Parameters
-    - `direction`: direction grid [deg] by default
-    - `mean_dir`: mean direction in same unit as `direction`
-    - `dir_unit`: `"deg"` or `"rad"`
+    theta = _dir_theta(direction, dir_unit=dir_unit)
+    theta_mean = np.deg2rad(mean_dir) if dir_unit.lower() == "deg" else float(mean_dir)
+    mean_deg = float(mean_dir) if dir_unit.lower() == "deg" else float(np.rad2deg(mean_dir))
 
-    Returns
-    - `xr.DataArray` over `dir`, normalized so integral over theta is 1.
+    delta = (theta - theta_mean + np.pi) % (2.0 * np.pi) - np.pi
+    w = xr.apply_ufunc(np.cos, delta) ** float(N)
+    w = w.where(np.abs(delta) <= (0.5 * np.pi), 0.0)
+    w = w.where(w > 0.0, 0.0)
+    D = _normalize_directional(w, theta)
+    D.name = "D_dir"
+    D.attrs.update({"spreading": "cosN_half", "mean_dir_deg": mean_deg, "N": float(N)})
+    return D
 
-    Reference
-    - https://github.com/kaufmann-jan/popcorn/blob/main/src/popcorn/signal/wave.py
+
+def spreading_mitsuyasu(
+    direction: xr.DataArray | np.ndarray | list[float],
+    freq: xr.DataArray | np.ndarray | list[float],
+    *,
+    mean_dir: float,
+    s_p : float,
+    omega_p: float | None = None,
+    tp: float | None = None,
+    dir_unit: str = "deg",
+) -> xr.DataArray:
+    """Mitsuyasu frequency-dependent spreading (ITTC) returning D(dir, freq).
+
+    The key parameter is
+    
+    s_p = s(ω_p)
+    
+    i.e. the spreading exponent at the spectral peak frequency. 
+    Spreading widens away from ω_p according to Mitsuyasu law
+    
+    Typical values depend on sea state maturity (wind sea vs swell) and are reasonably well established in offshore practice.
+    
+    
+    | Sea type         | Typical s_p |
+    | ---------------- | ----------- |
+    | Broad / confused | 2 – 5       |
+    | Moderate wind    | 5 – 15      |
+    | Narrow wind sea  | 15 – 30     |
+    | Swell            | 25 – 75     |
+    
+    
+    Default: s_p = 10
+
+    
     """
-    return _spreading_cosn(direction, mean_dir=mean_dir, power=4, dir_unit=dir_unit)
+    if s_p < 0.0:
+        raise ValueError("s_p must be >= 0")
+    if omega_p is None:
+        if tp is None or tp <= 0.0:
+            raise ValueError("provide omega_p or a positive tp")
+        omega_p = 2.0 * np.pi / float(tp)
+    if omega_p <= 0.0:
+        raise ValueError("omega_p must be > 0")
+
+    theta = _dir_theta(direction, dir_unit=dir_unit)
+    f = _as_1d_coord_array(freq, dim="freq").astype(float)
+    theta_mean = np.deg2rad(mean_dir) if dir_unit.lower() == "deg" else float(mean_dir)
+    mean_deg = float(mean_dir) if dir_unit.lower() == "deg" else float(np.rad2deg(mean_dir))
+
+    delta = (theta - theta_mean + np.pi) % (2.0 * np.pi) - np.pi
+    ratio = f / float(omega_p)
+    s_omega = xr.where(f <= omega_p, float(s_p) * ratio**5, float(s_p) * ratio ** (-2.5))
+
+    w = xr.apply_ufunc(np.cos, 0.5 * delta) ** (2.0 * s_omega)
+    w = w.where(np.abs(delta) <= np.pi, 0.0)
+    w = w.where(w > 0.0, 0.0)
+    w = w.transpose("dir", "freq")
+    D = _normalize_directional(w, theta)
+    D.name = "D_dir"
+    D.attrs.update({"spreading": "mitsuyasu", "mean_dir_deg": mean_deg, "s_p": float(s_p), "omega_p": float(omega_p)})
+    return D
 
 
 def directional_spectrum(
@@ -308,11 +380,17 @@ def directional_spectrum(
 
     if "freq" not in S_omega.dims or S_omega.ndim != 1:
         raise ValueError("S_omega must be 1-D with dim 'freq'")
-    if "dir" not in D_dir.dims or D_dir.ndim != 1:
-        raise ValueError("D_dir must be 1-D with dim 'dir'")
+    if "dir" not in D_dir.dims:
+        raise ValueError("D_dir must include dim 'dir'")
+    if D_dir.ndim not in (1, 2):
+        raise ValueError("D_dir must be 1-D (dir) or 2-D (dir,freq)")
+    if D_dir.ndim == 2 and "freq" not in D_dir.dims:
+        raise ValueError("2-D D_dir must have dims including 'freq'")
 
     S = S_omega.reindex(freq=f.values)
     D = D_dir.reindex(dir=d.values)
+    if "freq" in D.dims:
+        D = D.reindex(freq=f.values)
 
     out = D * S
     out = out.transpose("dir", "freq")
@@ -328,7 +406,7 @@ def make_directional_spectrum(
     hs: float,
     tp: float,
     mean_dir: float,
-    spreading: str = "cos2",
+    spreading: str = "cos2s_full",
     **kwargs: float,
 ) -> xr.DataArray:
     """Convenience builder for directional spectrum S(dir, freq).
@@ -339,7 +417,7 @@ def make_directional_spectrum(
     - `model`: one of `bretschneider`, `pm`, `jonswap`, `goda`
     - `hs`, `tp`: sea-state parameters [m], [s]
     - `mean_dir`: mean wave direction [deg]
-    - `spreading`: one of `cos2`, `cos4`
+    - `spreading`: one of `cos2s_full`, `cosN_half`, `mitsuyasu`
 
     Returns
     - `xr.DataArray` with dims `(dir, freq)`.
@@ -367,38 +445,26 @@ def make_directional_spectrum(
         raise ValueError("model must be one of: bretschneider, pm, jonswap, goda")
 
     spread_key = spreading.lower()
-    if spread_key == "cos2":
-        D_dir = spreading_cos2(direction, mean_dir=mean_dir, dir_unit="deg")
-    elif spread_key == "cos4":
-        D_dir = spreading_cos4(direction, mean_dir=mean_dir, dir_unit="deg")
+    if spread_key == "cos2s_full":
+        D_dir = spreading_cos2s_full(direction, mean_dir=mean_dir, s=float(kwargs.get("s", 1.0)), dir_unit="deg")
+    elif spread_key == "cosn_half":
+        D_dir = spreading_cosN_half(direction, mean_dir=mean_dir, N=float(kwargs.get("N", 2.0)), dir_unit="deg")
+    elif spread_key == "mitsuyasu":
+        if "s_p" not in kwargs:
+            raise ValueError("mitsuyasu spreading requires parameter 's_p'")
+        D_dir = spreading_mitsuyasu(
+            direction,
+            freq,
+            mean_dir=mean_dir,
+            s_p=float(kwargs["s_p"]),
+            omega_p=kwargs.get("omega_p"),
+            tp=kwargs.get("tp", tp),
+            dir_unit="deg",
+        )
     else:
-        raise ValueError("spreading must be one of: cos2, cos4")
+        raise ValueError("spreading must be one of: cos2s_full, cosN_half, mitsuyasu")
 
     return directional_spectrum(freq, direction, S_omega=S_omega, D_dir=D_dir)
 
 
-# Backward-compatible names from previous version.
 bretschneider_spectrum = bretschneider
-
-
-def directional_spreading_cos2n(
-    direction_deg: xr.DataArray | np.ndarray | list[float],
-    mean_dir_deg: float,
-    n: float,
-) -> xr.DataArray:
-    """Backward-compatible cosine-power spreading helper.
-
-    Uses shape cos(delta/2)^(2n) and normalizes numerically over direction.
-    """
-    if n <= 0:
-        raise ValueError("n must be > 0")
-    d = _as_1d_coord_array(direction_deg, dim="dir")
-    theta = np.deg2rad(d)
-    theta_mean = np.deg2rad(mean_dir_deg)
-    delta = (theta - theta_mean + np.pi) % (2.0 * np.pi) - np.pi
-    w = xr.apply_ufunc(np.cos, 0.5 * delta) ** (2.0 * float(n))
-    w = w.where(w > 0.0, 0.0)
-    denom = np.trapezoid(w.values, theta.values)
-    if not np.isfinite(denom) or denom <= 0.0:
-        raise ValueError("directional spreading normalization failed")
-    return w / denom
