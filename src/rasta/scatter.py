@@ -90,4 +90,33 @@ def write_scatter_csv(scatter: xr.Dataset, path: str | Path) -> None:
 def load_iacs_rec34_rev2_scatter() -> xr.Dataset:
     """Load bundled IACS Rec. 34 Rev. 2 style example scatter table."""
     resource = files("rasta.resources").joinpath("iacs_rec34_rev2_scatter.csv")
-    return read_scatter_csv(resource)
+    data = np.genfromtxt(resource, delimiter=",", names=True, dtype=float, encoding="utf-8")
+    names = {name.lower(): name for name in data.dtype.names or ()}
+
+    # Preferred tidy format.
+    if "hs" in names and "p" in names and ("tp" in names or "tz" in names):
+        return read_scatter_csv(resource)
+
+    # Bundled IACS example format: hs,tm01,count
+    if "hs" in names and "tm01" in names and "count" in names:
+        hs = np.asarray(data[names["hs"]], dtype=float)
+        tp = np.asarray(data[names["tm01"]], dtype=float)
+        count = np.asarray(data[names["count"]], dtype=float)
+
+        hs_u = np.unique(hs)
+        tp_u = np.unique(tp)
+        arr = np.zeros((hs_u.size, tp_u.size), dtype=float)
+        h_idx = {v: i for i, v in enumerate(hs_u.tolist())}
+        t_idx = {v: i for i, v in enumerate(tp_u.tolist())}
+
+        for h, t, c in zip(hs, tp, count):
+            arr[h_idx[float(h)], t_idx[float(t)]] += float(c)
+
+        ds = xr.Dataset(
+            {"p": (("hs", "tp"), arr)},
+            coords={"hs": hs_u.astype(float), "tp": tp_u.astype(float)},
+            attrs={"source": str(resource), "hs_unit": "m", "tp_unit": "s"},
+        )
+        return validate_scatter(ds)
+
+    raise ValueError("unsupported bundled scatter resource format")

@@ -19,7 +19,7 @@ from .spectra import (
     spreading_cosN_half,
     spreading_mitsuyasu,
 )
-from .stats.longterm import longterm_statistics
+from .stats.longterm import longterm_response_cycle_counts, longterm_statistics
 from .stats.response_spectrum import compute_response_spectrum, extend_symmetric_raos
 from .stats.shortterm import shortterm_statistics
 
@@ -44,4 +44,5 @@ __all__ = [
     "extend_symmetric_raos",
     "shortterm_statistics",
     "longterm_statistics",
+    "longterm_response_cycle_counts",
 ]

@@ -66,49 +66,16 @@ def _shortterm_bin(
     return shortterm_statistics(sr, duration_s=3600.0)
 
 
-def _q_bin(x: np.ndarray, sigma: float, Ncycles: float) -> np.ndarray:
-    sigma = max(float(sigma), 1e-12)
-    N = max(float(Ncycles), 1e-12)
-    return 1.0 - np.exp(-N * np.exp(-(x**2) / (2.0 * sigma**2)))
-
-
-def _interp_level(x: np.ndarray, y: np.ndarray, target: float) -> float:
-    y_clip = np.clip(y, 0.0, 1.0)
-    order = np.argsort(y_clip)
-    ys = y_clip[order]
-    xs = x[order]
-    ys_unique, idx = np.unique(ys, return_index=True)
-    xs_unique = xs[idx]
-    if ys_unique.size == 1:
-        return float(xs_unique[0])
-    t = float(np.clip(target, ys_unique.min(), ys_unique.max()))
-    return float(np.interp(t, ys_unique, xs_unique))
-
-
-def longterm_statistics(
+def _collect_bins(
     rs: RAOSet,
-    scatter: xr.Dataset,
+    sc: xr.Dataset,
     *,
-    resp: str | list[str],
-    years: float = 25.0,
-    spectrum_model: str = "jonswap",
-    spreading: str | None = None,
-    symmetry: bool = True,
-    operational_profile: xr.Dataset | None = None,
-    exceedance_probs: list[float] | None = None,
-    return_period_years: list[float] | None = None,
-    weibull_fit: bool = True,
-) -> xr.Dataset:
-    """Compute long-term exceedance and return levels using bin aggregation."""
-    if years <= 0.0:
-        raise ValueError("years must be > 0")
-
-    sc = validate_scatter(scatter)
-    if "tp" not in sc.coords:
-        raise ValueError("v1 long-term statistics requires scatter with 'tp' coordinate")
-
-    resp_names = _as_resp_list(resp)
-
+    resp_names: list[str],
+    spectrum_model: str,
+    spreading: str | None,
+    symmetry: bool,
+    operational_profile: xr.Dataset | None,
+) -> list[_BinResult]:
     if operational_profile is None:
         mean_dirs = np.asarray(rs.dataset.coords["dir"].values, dtype=float)
         speeds = None
@@ -181,17 +148,77 @@ def longterm_statistics(
                         )
                     )
 
+    return bins
+
+
+def _q_bin(x: np.ndarray, sigma: float, Ncycles: float) -> np.ndarray:
+    sigma = max(float(sigma), 1e-12)
+    N = max(float(Ncycles), 1e-12)
+    return 1.0 - np.exp(-N * np.exp(-(x**2) / (2.0 * sigma**2)))
+
+
+def _interp_level(x: np.ndarray, y: np.ndarray, target: float) -> float:
+    y_clip = np.clip(y, 0.0, 1.0)
+    order = np.argsort(y_clip)
+    ys = y_clip[order]
+    xs = x[order]
+    ys_unique, idx = np.unique(ys, return_index=True)
+    xs_unique = xs[idx]
+    if ys_unique.size == 1:
+        return float(xs_unique[0])
+    t = float(np.clip(target, ys_unique.min(), ys_unique.max()))
+    return float(np.interp(t, ys_unique, xs_unique))
+
+
+def longterm_statistics(
+    rs: RAOSet,
+    scatter: xr.Dataset,
+    *,
+    resp: str | list[str],
+    years: float = 25.0,
+    spectrum_model: str = "jonswap",
+    spreading: str | None = None,
+    symmetry: bool = True,
+    operational_profile: xr.Dataset | None = None,
+    exceedance_probs: list[float] | None = None,
+    weibull_fit: bool = True,
+    include_n_exceed: bool = False,
+) -> xr.Dataset:
+    """Compute long-term exceedance using bin aggregation.
+
+    Parameters
+    - `years`: exposure horizon for `P_exceed(resp, x)`.
+    - `include_n_exceed`: if True, include `N_exceed(resp, x)`, the expected
+      exceedance count over `years`, computed as `-ln(1 - P_exceed)`.
+    """
+    if years <= 0.0:
+        raise ValueError("years must be > 0")
+
+    sc = validate_scatter(scatter)
+    if "tp" not in sc.coords:
+        raise ValueError("v1 long-term statistics requires scatter with 'tp' coordinate")
+
+    resp_names = _as_resp_list(resp)
+    bins = _collect_bins(
+        rs,
+        sc,
+        resp_names=resp_names,
+        spectrum_model=spectrum_model,
+        spreading=spreading,
+        symmetry=symmetry,
+        operational_profile=operational_profile,
+    )
+
     if not bins:
         raise ValueError("no bins available for long-term computation")
 
     exceedance_probs = exceedance_probs or []
-    return_period_years = return_period_years or []
-
     hours_total = years * 365.25 * 24.0
 
     x_grid = np.linspace(0.0, max(b.sigma * np.sqrt(2.0 * np.log(max(b.Ncycles, 2.0))) for b in bins) * 6.0, 1200)
 
     p_exc_mat = np.zeros((len(resp_names), x_grid.size), dtype=float)
+    n_exc_mat = np.zeros((len(resp_names), x_grid.size), dtype=float)
 
     design_hs = np.full(len(resp_names), np.nan)
     design_tp = np.full(len(resp_names), np.nan)
@@ -203,8 +230,6 @@ def longterm_statistics(
     design_Tz = np.full(len(resp_names), np.nan)
 
     x_exceed = np.full((len(resp_names), len(exceedance_probs)), np.nan)
-    x_return = np.full((len(resp_names), len(return_period_years)), np.nan)
-
     weib_k = np.full(len(resp_names), np.nan)
     weib_l = np.full(len(resp_names), np.nan)
 
@@ -217,20 +242,13 @@ def longterm_statistics(
         p_nonexc = np.exp(-hours_total * q_total)
         p_exc = 1.0 - p_nonexc
         p_exc_mat[ir, :] = p_exc
+        n_exc_mat[ir, :] = -np.log(np.clip(1.0 - p_exc, 1e-300, 1.0))
 
         for ip, p in enumerate(exceedance_probs):
             x_exceed[ir, ip] = _interp_level(x_grid, p_exc, float(p))
 
-        for it, ty in enumerate(return_period_years):
-            if ty <= 0:
-                continue
-            p_target = 1.0 - np.exp(-1.0 / float(ty))
-            x_return[ir, it] = _interp_level(x_grid, p_exc, p_target)
-
         x_star = None
-        if len(return_period_years) > 0 and np.isfinite(x_return[ir, 0]):
-            x_star = float(x_return[ir, 0])
-        elif len(exceedance_probs) > 0 and np.isfinite(x_exceed[ir, 0]):
+        if len(exceedance_probs) > 0 and np.isfinite(x_exceed[ir, 0]):
             x_star = float(x_exceed[ir, 0])
         else:
             x_star = float(np.nanpercentile(x_grid, 90.0))
@@ -259,28 +277,97 @@ def longterm_statistics(
                     weib_k[ir] = float(k)
                     weib_l[ir] = float(np.exp(-b0 / k))
 
+    data_vars = {
+        "P_exceed": (("resp", "x"), p_exc_mat),
+        "x_exceed": (("resp", "exceedance_prob"), x_exceed),
+        "design_hs": (("resp",), design_hs),
+        "design_tp": (("resp",), design_tp),
+        "design_mean_dir": (("resp",), design_mean_dir),
+        "design_speed": (("resp",), design_speed),
+        "design_depth": (("resp",), design_depth),
+        "design_weight": (("resp",), design_weight),
+        "design_sigma": (("resp",), design_sigma),
+        "design_Tz": (("resp",), design_Tz),
+        "weibull_k": (("resp",), weib_k),
+        "weibull_lambda": (("resp",), weib_l),
+    }
+    if include_n_exceed:
+        data_vars["N_exceed"] = (("resp", "x"), n_exc_mat)
+
     ds = xr.Dataset(
-        {
-            "P_exceed": (("resp", "x"), p_exc_mat),
-            "x_exceed": (("resp", "exceedance_prob"), x_exceed),
-            "x_return": (("resp", "return_period_year"), x_return),
-            "design_hs": (("resp",), design_hs),
-            "design_tp": (("resp",), design_tp),
-            "design_mean_dir": (("resp",), design_mean_dir),
-            "design_speed": (("resp",), design_speed),
-            "design_depth": (("resp",), design_depth),
-            "design_weight": (("resp",), design_weight),
-            "design_sigma": (("resp",), design_sigma),
-            "design_Tz": (("resp",), design_Tz),
-            "weibull_k": (("resp",), weib_k),
-            "weibull_lambda": (("resp",), weib_l),
-        },
+        data_vars,
         coords={
             "resp": np.array(resp_names, dtype=object),
             "x": x_grid,
             "exceedance_prob": np.asarray(exceedance_probs, dtype=float),
-            "return_period_year": np.asarray(return_period_years, dtype=float),
         },
         attrs={"years": float(years), "assumption": "Gaussian narrowband + Poisson aggregation"},
     )
     return ds
+
+
+def longterm_response_cycle_counts(
+    rs: RAOSet,
+    scatter: xr.Dataset,
+    *,
+    resp: str | list[str],
+    years: float = 25.0,
+    spectrum_model: str = "jonswap",
+    spreading: str | None = None,
+    symmetry: bool = True,
+    operational_profile: xr.Dataset | None = None,
+    x_grid: xr.DataArray | np.ndarray | list[float] | None = None,
+) -> xr.Dataset:
+    """Expected long-term response-cycle exceedance counts versus response level.
+
+    Returns `N_cycles_exceed(resp, x)`: expected number of response cycles with
+    amplitude greater than `x` over `years`, using a narrowband Rayleigh tail
+    approximation per sea-state bin.
+    """
+    if years <= 0.0:
+        raise ValueError("years must be > 0")
+
+    sc = validate_scatter(scatter)
+    if "tp" not in sc.coords:
+        raise ValueError("v1 long-term statistics requires scatter with 'tp' coordinate")
+
+    resp_names = _as_resp_list(resp)
+    bins = _collect_bins(
+        rs,
+        sc,
+        resp_names=resp_names,
+        spectrum_model=spectrum_model,
+        spreading=spreading,
+        symmetry=symmetry,
+        operational_profile=operational_profile,
+    )
+    if not bins:
+        raise ValueError("no bins available for long-term computation")
+
+    if x_grid is None:
+        xmax = max(b.sigma * np.sqrt(2.0 * np.log(max(b.Ncycles, 2.0))) for b in bins) * 6.0
+        x_vals = np.linspace(0.0, xmax, 1200, dtype=float)
+    else:
+        x_vals = np.asarray(xr.DataArray(x_grid).values if isinstance(x_grid, xr.DataArray) else x_grid, dtype=float)
+        if x_vals.ndim != 1:
+            raise ValueError("x_grid must be 1-D")
+        if x_vals.size == 0:
+            raise ValueError("x_grid must not be empty")
+
+    hours_total = years * 365.25 * 24.0
+    n_mat = np.zeros((len(resp_names), x_vals.size), dtype=float)
+
+    for ir, r in enumerate(resp_names):
+        rbins = [b for b in bins if b.resp == r]
+        n_tot = np.zeros_like(x_vals)
+        for b in rbins:
+            sigma = max(float(b.sigma), 1e-12)
+            cycles_bin = hours_total * float(b.weight) * float(b.Ncycles)
+            n_tot += cycles_bin * np.exp(-(x_vals**2) / (2.0 * sigma**2))
+        n_mat[ir, :] = n_tot
+
+    return xr.Dataset(
+        {"N_cycles_exceed": (("resp", "x"), n_mat)},
+        coords={"resp": np.array(resp_names, dtype=object), "x": x_vals},
+        attrs={"years": float(years), "assumption": "Gaussian narrowband Rayleigh-cycle tail"},
+    )
