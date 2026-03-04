@@ -6,6 +6,7 @@ from .scatter import (
     load_iacs_rec34_rev2_scatter,
     read_scatter_csv,
     validate_scatter,
+    write_scatter_tab,
     write_scatter_csv,
 )
 from .spectra import (
@@ -27,6 +28,7 @@ __all__ = [
     "RAOSet",
     "read_scatter_csv",
     "write_scatter_csv",
+    "write_scatter_tab",
     "validate_scatter",
     "load_iacs_rec34_rev2_scatter",
     "make_operational_profile",

@@ -9,6 +9,7 @@ from rasta.io import (
     read_hydrostar_distributed_loads,
     read_hydrostar_rao,
     read_hydrostar_raos,
+    write_raoset_xtf,
 )
 from rasta.validation import REQUIRED_ATTRS
 
@@ -89,3 +90,30 @@ def test_read_hydrostar_raos_rejects_distributed_inputs() -> None:
     paths = [FIXTURES / f"Mys{i}.rao" for i in range(1, 10)]
     with pytest.raises(ValueError, match="distributed"):
         read_hydrostar_raos(paths)
+
+
+def test_write_raoset_xtf_format_and_values(tmp_path) -> None:
+    rs = read_hydrostar_raos([FIXTURES / "heave.rao", FIXTURES / "pitch.rao"])
+    out = tmp_path / "raoset_lines.txt"
+    write_raoset_xtf(rs, out, speed=0.0)
+
+    with out.open("r", encoding="utf-8") as f:
+        lines = [ln.strip() for ln in f if ln.strip() and not ln.lstrip().startswith("#")]
+
+    freq = rs.dataset.coords["freq"].values
+    direction = rs.dataset.coords["dir"].values
+    n_tf = int(rs.rao.sizes["resp"])
+
+    assert len(lines) == int(freq.size * direction.size)
+
+    first = np.array([float(tok) for tok in lines[0].split()], dtype=float)
+    assert first.size == 4 + 2 * n_tf
+    assert np.isclose(first[0], 0.0)
+    assert np.isclose(first[1], float(freq[0]))
+    assert np.isclose(first[2], float(direction[0]))
+    assert np.isclose(first[3], 2.0 * np.pi * 9.81 / (float(freq[0]) ** 2))
+
+    ref = rs.rao.sel(freq=float(freq[0]), dir=float(direction[0])).transpose("resp").values
+    for i, z in enumerate(ref):
+        assert np.isclose(first[4 + 2 * i], float(np.real(z)))
+        assert np.isclose(first[5 + 2 * i], float(np.imag(z)))
