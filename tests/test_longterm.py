@@ -38,6 +38,7 @@ def test_longterm_statistics_smoke() -> None:
         years=1.0,
         operational_profile=profile,
         exceedance_probs=[1e-2, 1e-3],
+        return_period_years=[1.0, 5.0],
     )
 
     assert "P_exceed" in out
@@ -47,7 +48,7 @@ def test_longterm_statistics_smoke() -> None:
     assert np.isfinite(float(out["design_hs"].sel(resp="heave").values))
 
 
-def test_longterm_statistics_optional_n_exceed() -> None:
+def test_longterm_statistics_optional_return_periods() -> None:
     rs = read_hydrostar_rao("tests/hydrostar/heave.rao")
 
     scatter = xr.Dataset(
@@ -64,19 +65,16 @@ def test_longterm_statistics_optional_n_exceed() -> None:
         years=25.0,
         operational_profile=profile,
         exceedance_probs=[1e-2],
-        include_n_exceed=True,
+        return_period_years=[100.0],
         weibull_fit=False,
     )
 
-    assert "N_exceed" in out
-    p = out["P_exceed"].sel(resp="heave").values
-    n = out["N_exceed"].sel(resp="heave").values
-    assert np.allclose(n, -np.log(np.clip(1.0 - p, 1e-300, 1.0)))
-
     x_exc = float(out["x_exceed"].sel(resp="heave", exceedance_prob=1e-2).values)
+    x_ret = float(out["x_return"].sel(resp="heave", return_period_year=100.0).values)
     assert np.isfinite(x_exc)
-    assert "x_return" not in out
-    assert "return_period_year" not in out.coords
+    assert np.isfinite(x_ret)
+    assert "N_exceed" not in out
+    assert "return_period_year" in out.coords
 
 
 def test_longterm_response_cycle_counts_monotonic() -> None:

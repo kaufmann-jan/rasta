@@ -181,15 +181,15 @@ def longterm_statistics(
     symmetry: bool = True,
     operational_profile: xr.Dataset | None = None,
     exceedance_probs: list[float] | None = None,
+    return_period_years: list[float] | None = None,
     weibull_fit: bool = True,
-    include_n_exceed: bool = False,
 ) -> xr.Dataset:
     """Compute long-term exceedance using bin aggregation.
 
     Parameters
     - `years`: exposure horizon for `P_exceed(resp, x)`.
-    - `include_n_exceed`: if True, include `N_exceed(resp, x)`, the expected
-      exceedance count over `years`, computed as `-ln(1 - P_exceed)`.
+    - `return_period_years`: optional return periods `T` for `x_return`,
+      evaluated on the same horizon as `P_exceed` using `1 - exp(-years / T)`.
     """
     if years <= 0.0:
         raise ValueError("years must be > 0")
@@ -213,12 +213,12 @@ def longterm_statistics(
         raise ValueError("no bins available for long-term computation")
 
     exceedance_probs = exceedance_probs or []
+    return_period_years = return_period_years or []
     hours_total = years * 365.25 * 24.0
 
     x_grid = np.linspace(0.0, max(b.sigma * np.sqrt(2.0 * np.log(max(b.Ncycles, 2.0))) for b in bins) * 6.0, 1200)
 
     p_exc_mat = np.zeros((len(resp_names), x_grid.size), dtype=float)
-    n_exc_mat = np.zeros((len(resp_names), x_grid.size), dtype=float)
 
     design_hs = np.full(len(resp_names), np.nan)
     design_tp = np.full(len(resp_names), np.nan)
@@ -230,6 +230,7 @@ def longterm_statistics(
     design_Tz = np.full(len(resp_names), np.nan)
 
     x_exceed = np.full((len(resp_names), len(exceedance_probs)), np.nan)
+    x_return = np.full((len(resp_names), len(return_period_years)), np.nan)
     weib_k = np.full(len(resp_names), np.nan)
     weib_l = np.full(len(resp_names), np.nan)
 
@@ -242,13 +243,20 @@ def longterm_statistics(
         p_nonexc = np.exp(-hours_total * q_total)
         p_exc = 1.0 - p_nonexc
         p_exc_mat[ir, :] = p_exc
-        n_exc_mat[ir, :] = -np.log(np.clip(1.0 - p_exc, 1e-300, 1.0))
 
         for ip, p in enumerate(exceedance_probs):
             x_exceed[ir, ip] = _interp_level(x_grid, p_exc, float(p))
 
+        for it, period_years in enumerate(return_period_years):
+            if period_years <= 0.0:
+                continue
+            p_target = 1.0 - np.exp(-float(years) / float(period_years))
+            x_return[ir, it] = _interp_level(x_grid, p_exc, p_target)
+
         x_star = None
-        if len(exceedance_probs) > 0 and np.isfinite(x_exceed[ir, 0]):
+        if len(return_period_years) > 0 and np.isfinite(x_return[ir, 0]):
+            x_star = float(x_return[ir, 0])
+        elif len(exceedance_probs) > 0 and np.isfinite(x_exceed[ir, 0]):
             x_star = float(x_exceed[ir, 0])
         else:
             x_star = float(np.nanpercentile(x_grid, 90.0))
@@ -280,6 +288,7 @@ def longterm_statistics(
     data_vars = {
         "P_exceed": (("resp", "x"), p_exc_mat),
         "x_exceed": (("resp", "exceedance_prob"), x_exceed),
+        "x_return": (("resp", "return_period_year"), x_return),
         "design_hs": (("resp",), design_hs),
         "design_tp": (("resp",), design_tp),
         "design_mean_dir": (("resp",), design_mean_dir),
@@ -291,8 +300,6 @@ def longterm_statistics(
         "weibull_k": (("resp",), weib_k),
         "weibull_lambda": (("resp",), weib_l),
     }
-    if include_n_exceed:
-        data_vars["N_exceed"] = (("resp", "x"), n_exc_mat)
 
     ds = xr.Dataset(
         data_vars,
@@ -300,6 +307,7 @@ def longterm_statistics(
             "resp": np.array(resp_names, dtype=object),
             "x": x_grid,
             "exceedance_prob": np.asarray(exceedance_probs, dtype=float),
+            "return_period_year": np.asarray(return_period_years, dtype=float),
         },
         attrs={"years": float(years), "assumption": "Gaussian narrowband + Poisson aggregation"},
     )
