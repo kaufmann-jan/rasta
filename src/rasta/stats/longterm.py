@@ -13,6 +13,11 @@ from ..scatter import validate_scatter
 from .response_spectrum import compute_response_spectrum
 from .shortterm import shortterm_statistics
 
+try:
+    from tqdm.auto import tqdm as _tqdm_auto
+except Exception:  # pragma: no cover - optional dependency fallback
+    _tqdm_auto = None
+
 
 @dataclass
 class _BinResult:
@@ -66,6 +71,12 @@ def _shortterm_bin(
     return shortterm_statistics(sr, duration_s=3600.0)
 
 
+def _progress(iterable, *, enabled: bool, total: int | None = None, desc: str = ""):
+    if not enabled or _tqdm_auto is None:
+        return iterable
+    return _tqdm_auto(iterable, total=total, desc=desc)
+
+
 def _collect_bins(
     rs: RAOSet,
     sc: xr.Dataset,
@@ -75,6 +86,7 @@ def _collect_bins(
     spreading: str | None,
     symmetry: bool,
     operational_profile: xr.Dataset | None,
+    show_progress: bool,
 ) -> list[_BinResult]:
     if operational_profile is None:
         mean_dirs = np.asarray(rs.dataset.coords["dir"].values, dtype=float)
@@ -97,8 +109,7 @@ def _collect_bins(
     w_op = op["w"]
     op_dims = list(w_op.dims)
     idx_ranges = [range(w_op.sizes[d]) for d in op_dims]
-
-    for i_h, hs in enumerate(hs_vals):
+    for i_h, hs in _progress(enumerate(hs_vals), enabled=show_progress, total=int(hs_vals.size), desc="Long-term Hs bins"):
         for i_t, tp in enumerate(tp_vals):
             p_state = float(p_sc[i_h, i_t])
             if p_state <= 0.0:
@@ -183,6 +194,7 @@ def longterm_statistics(
     exceedance_probs: list[float] | None = None,
     return_period_years: list[float] | None = None,
     weibull_fit: bool = True,
+    show_progress: bool = False,
 ) -> xr.Dataset:
     """Compute long-term exceedance using bin aggregation.
 
@@ -190,6 +202,7 @@ def longterm_statistics(
     - `years`: exposure horizon for `P_exceed(resp, x)`.
     - `return_period_years`: optional return periods `T` for `x_return`,
       evaluated on the same horizon as `P_exceed` using `1 - exp(-years / T)`.
+    - `show_progress`: enable a simple progress bar when `tqdm` is available.
     """
     if years <= 0.0:
         raise ValueError("years must be > 0")
@@ -207,6 +220,7 @@ def longterm_statistics(
         spreading=spreading,
         symmetry=symmetry,
         operational_profile=operational_profile,
+        show_progress=show_progress,
     )
 
     if not bins:
@@ -234,7 +248,7 @@ def longterm_statistics(
     weib_k = np.full(len(resp_names), np.nan)
     weib_l = np.full(len(resp_names), np.nan)
 
-    for ir, r in enumerate(resp_names):
+    for ir, r in _progress(enumerate(resp_names), enabled=show_progress, total=len(resp_names), desc="Long-term responses"):
         rbins = [b for b in bins if b.resp == r]
         q_total = np.zeros_like(x_grid)
         for b in rbins:
@@ -325,6 +339,7 @@ def longterm_response_cycle_counts(
     symmetry: bool = True,
     operational_profile: xr.Dataset | None = None,
     x_grid: xr.DataArray | np.ndarray | list[float] | None = None,
+    show_progress: bool = False,
 ) -> xr.Dataset:
     """Expected long-term response-cycle exceedance counts versus response level.
 
@@ -348,6 +363,7 @@ def longterm_response_cycle_counts(
         spreading=spreading,
         symmetry=symmetry,
         operational_profile=operational_profile,
+        show_progress=show_progress,
     )
     if not bins:
         raise ValueError("no bins available for long-term computation")
@@ -365,7 +381,7 @@ def longterm_response_cycle_counts(
     hours_total = years * 365.25 * 24.0
     n_mat = np.zeros((len(resp_names), x_vals.size), dtype=float)
 
-    for ir, r in enumerate(resp_names):
+    for ir, r in _progress(enumerate(resp_names), enabled=show_progress, total=len(resp_names), desc="Cycle-count responses"):
         rbins = [b for b in bins if b.resp == r]
         n_tot = np.zeros_like(x_vals)
         for b in rbins:

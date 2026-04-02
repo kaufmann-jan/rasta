@@ -4,6 +4,7 @@ import numpy as np
 import xarray as xr
 
 from rasta.scatter import (
+    limit_scatter_hs,
     load_iacs_rec34_rev2_scatter,
     read_scatter_csv,
     validate_scatter,
@@ -114,3 +115,16 @@ def test_write_scatter_tab_drop_all_zero_rows(tmp_path) -> None:
     assert len(lines) == 5
     vals = np.array([float(v) for v in lines[4].split()], dtype=float)
     assert np.isclose(vals[0], 3.0)
+
+
+def test_limit_scatter_hs_filters_and_renormalizes() -> None:
+    ds = xr.Dataset(
+        {"p": (("hs", "tp"), np.array([[0.1, 0.2], [0.3, 0.1], [0.2, 0.1]], dtype=float))},
+        coords={"hs": np.array([1.0, 2.0, 4.0]), "tp": np.array([6.0, 8.0])},
+    )
+
+    out = limit_scatter_hs(ds, hs_lim=2.5)
+    assert np.allclose(out.coords["hs"].values, np.array([1.0, 2.0]))
+    assert np.isclose(float(out["p"].sum().values), 1.0)
+    assert np.isclose(float(out["p"].sel(hs=1.0, tp=6.0).values), 0.1 / 0.7)
+    assert out.attrs["hs_lim"] == 2.5

@@ -93,6 +93,23 @@ def validate_scatter(scatter: xr.Dataset) -> xr.Dataset:
     return out
 
 
+def limit_scatter_hs(scatter: xr.Dataset, hs_lim: float) -> xr.Dataset:
+    """Drop all scatter-table bins with `hs > hs_lim` and renormalize."""
+    if not np.isfinite(hs_lim):
+        raise ValueError("hs_lim must be finite")
+
+    sc = validate_scatter(scatter)
+    hs_vals = np.asarray(sc.coords["hs"].values, dtype=float)
+    keep = hs_vals <= float(hs_lim)
+    if not np.any(keep):
+        raise ValueError("hs_lim removes all scatter rows")
+
+    out = sc.isel(hs=np.nonzero(keep)[0])
+    out = validate_scatter(out)
+    out.attrs["hs_lim"] = float(hs_lim)
+    return out
+
+
 def read_scatter_csv(
     path: str | Path,
     *,

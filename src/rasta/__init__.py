@@ -3,6 +3,7 @@
 from .rao import RAOSet
 from .operational import make_operational_profile, validate_operational_profile
 from .scatter import (
+    limit_scatter_hs,
     load_iacs_rec34_rev2_scatter,
     read_scatter_csv,
     validate_scatter,
@@ -29,6 +30,7 @@ __all__ = [
     "read_scatter_csv",
     "write_scatter_csv",
     "write_scatter_tab",
+    "limit_scatter_hs",
     "validate_scatter",
     "load_iacs_rec34_rev2_scatter",
     "make_operational_profile",
