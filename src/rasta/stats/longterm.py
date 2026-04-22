@@ -56,6 +56,7 @@ def _shortterm_bin(
     mean_dir: float,
     spectrum_model: str,
     spreading: str | None,
+    spreading_kwargs: dict | None,
     symmetry: bool,
 ) -> xr.Dataset:
     sr = compute_response_spectrum(
@@ -66,6 +67,7 @@ def _shortterm_bin(
         mean_dir=mean_dir,
         spectrum_model=spectrum_model,
         spreading=spreading,
+        spreading_kwargs=spreading_kwargs,
         symmetry=symmetry,
     )["S_r"]
     return shortterm_statistics(sr, duration_s=3600.0)
@@ -84,6 +86,7 @@ def _collect_bins(
     resp_names: list[str],
     spectrum_model: str,
     spreading: str | None,
+    spreading_kwargs: dict | None,
     symmetry: bool,
     operational_profile: xr.Dataset | None,
     show_progress: bool,
@@ -141,6 +144,7 @@ def _collect_bins(
                         mean_dir=mean_dir,
                         spectrum_model=spectrum_model,
                         spreading=spreading,
+                        spreading_kwargs=spreading_kwargs,
                         symmetry=symmetry,
                     )
                     bins.append(
@@ -189,6 +193,7 @@ def longterm_statistics(
     years: float = 25.0,
     spectrum_model: str = "jonswap",
     spreading: str | None = None,
+    spreading_kwargs: dict | None = None,
     symmetry: bool = True,
     operational_profile: xr.Dataset | None = None,
     exceedance_probs: list[float] | None = None,
@@ -218,6 +223,7 @@ def longterm_statistics(
         resp_names=resp_names,
         spectrum_model=spectrum_model,
         spreading=spreading,
+        spreading_kwargs=spreading_kwargs,
         symmetry=symmetry,
         operational_profile=operational_profile,
         show_progress=show_progress,
@@ -336,6 +342,7 @@ def longterm_response_cycle_counts(
     years: float = 25.0,
     spectrum_model: str = "jonswap",
     spreading: str | None = None,
+    spreading_kwargs: dict | None = None,
     symmetry: bool = True,
     operational_profile: xr.Dataset | None = None,
     x_grid: xr.DataArray | np.ndarray | list[float] | None = None,
@@ -361,6 +368,7 @@ def longterm_response_cycle_counts(
         resp_names=resp_names,
         spectrum_model=spectrum_model,
         spreading=spreading,
+        spreading_kwargs=spreading_kwargs,
         symmetry=symmetry,
         operational_profile=operational_profile,
         show_progress=show_progress,

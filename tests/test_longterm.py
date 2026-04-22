@@ -100,3 +100,64 @@ def test_longterm_response_cycle_counts_monotonic() -> None:
     assert float(n[0]) > 0.0
     # exceedance cycle count must be non-increasing with threshold x
     assert np.all(np.diff(n) <= 1e-10)
+
+
+def test_longterm_statistics_accepts_spreading_kwargs() -> None:
+    rs = read_hydrostar_rao("tests/hydrostar/heave.rao")
+    scatter = xr.Dataset(
+        {"p": (("hs", "tp"), np.array([[1.0]], dtype=float))},
+        coords={"hs": np.array([2.5]), "tp": np.array([8.0])},
+    )
+    scatter = validate_scatter(scatter)
+    profile = make_operational_profile(mean_dirs=np.array([180.0]))
+
+    out_n2 = longterm_statistics(
+        rs,
+        scatter,
+        resp="heave",
+        years=1.0,
+        operational_profile=profile,
+        spreading="cosN_half",
+        spreading_kwargs={"N": 2.0},
+        exceedance_probs=[1e-2],
+        weibull_fit=False,
+    )
+    out_n3 = longterm_statistics(
+        rs,
+        scatter,
+        resp="heave",
+        years=1.0,
+        operational_profile=profile,
+        spreading="cosN_half",
+        spreading_kwargs={"N": 3.0},
+        exceedance_probs=[1e-2],
+        weibull_fit=False,
+    )
+
+    x2 = float(out_n2["x_exceed"].sel(resp="heave", exceedance_prob=1e-2).values)
+    x3 = float(out_n3["x_exceed"].sel(resp="heave", exceedance_prob=1e-2).values)
+    assert np.isfinite(x2)
+    assert np.isfinite(x3)
+
+
+def test_longterm_response_cycle_counts_accepts_spreading_kwargs() -> None:
+    rs = read_hydrostar_rao("tests/hydrostar/heave.rao")
+    scatter = xr.Dataset(
+        {"p": (("hs", "tp"), np.array([[1.0]], dtype=float))},
+        coords={"hs": np.array([2.5]), "tp": np.array([8.0])},
+    )
+    scatter = validate_scatter(scatter)
+    profile = make_operational_profile(mean_dirs=np.array([180.0]))
+
+    out = longterm_response_cycle_counts(
+        rs,
+        scatter,
+        resp="heave",
+        years=1.0,
+        operational_profile=profile,
+        spreading="cosN_half",
+        spreading_kwargs={"N": 3.0},
+    )
+
+    assert "N_cycles_exceed" in out
+    assert np.all(np.isfinite(out["N_cycles_exceed"].sel(resp="heave").values))

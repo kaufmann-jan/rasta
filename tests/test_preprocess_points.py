@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+import numpy as np
+import pytest
+import xarray as xr
+
+from rasta.preprocess import point_motion
+from rasta.rao import RAOSet
+from rasta.validation import REQUIRED_ATTRS
+
+
+def _motion_rs() -> RAOSet:
+    freq = np.array([1.0], dtype=float)
+    direction = np.array([180.0], dtype=float)
+    resp = np.array(["surge", "sway", "heave", "roll", "pitch", "yaw"], dtype=object)
+    data = np.array(
+        [
+            [[1.0 + 0.0j]],
+            [[2.0 + 0.0j]],
+            [[3.0 + 0.0j]],
+            [[0.1 + 0.0j]],
+            [[0.2 + 0.0j]],
+            [[0.3 + 0.0j]],
+        ],
+        dtype=np.complex128,
+    )
+    ds = xr.Dataset(
+        {"rao": (("resp", "dir", "freq"), data)},
+        coords={"resp": resp, "dir": direction, "freq": freq},
+        attrs=dict(REQUIRED_ATTRS),
+    )
+    return RAOSet(ds)
+
+
+def test_point_motion_zero_offset() -> None:
+    rs = _motion_rs()
+    out = point_motion(rs, point=(0.0, 0.0, 0.0))
+    assert np.allclose(out.rao.sel(resp="point_x").values, out.rao.sel(resp="surge").values)
+    assert np.allclose(out.rao.sel(resp="point_y").values, out.rao.sel(resp="sway").values)
+    assert np.allclose(out.rao.sel(resp="point_z").values, out.rao.sel(resp="heave").values)
+
+
+def test_point_motion_pitch_contribution() -> None:
+    rs = _motion_rs()
+    out = point_motion(rs, point=(0.0, 0.0, 10.0))
+    expected = 1.0 + 0.2 * 10.0
+    assert np.isclose(out.rao.sel(resp="point_x").values.item().real, expected)
+
+
+def test_point_motion_yaw_contribution() -> None:
+    rs = _motion_rs()
+    out = point_motion(rs, point=(5.0, 0.0, 0.0))
+    expected = 2.0 + 0.3 * 5.0
+    assert np.isclose(out.rao.sel(resp="point_y").values.item().real, expected)
+
+
+def test_point_motion_roll_contribution() -> None:
+    rs = _motion_rs()
+    out = point_motion(rs, point=(0.0, 4.0, 0.0))
+    expected = 3.0 + 0.1 * 4.0
+    assert np.isclose(out.rao.sel(resp="point_z").values.item().real, expected)
+
+
+def test_point_motion_relative_vs_absolute_equivalence() -> None:
+    rs = _motion_rs()
+    ds_abs = rs.dataset.copy()
+    ds_abs.attrs.update({"xref": 50.0, "yref": 0.0, "zref": 0.0})
+    rs_abs = RAOSet(ds_abs)
+
+    rel = point_motion(rs, point=(20.0, 0.0, 0.0), point_mode="relative", point_name="bow")
+    abs_ = point_motion(rs_abs, point=(70.0, 0.0, 0.0), point_mode="absolute", point_name="bow")
+    assert np.allclose(rel.rao.sel(resp="bow_y").values, abs_.rao.sel(resp="bow_y").values)
+    assert abs_.dataset.attrs["point_coordinates_relative"] == (20.0, 0.0, 0.0)
+
+
+def test_point_motion_absolute_missing_reference_point() -> None:
+    rs = _motion_rs()
+    with pytest.raises(ValueError, match="xref"):
+        point_motion(rs, point=(70.0, 0.0, 0.0), point_mode="absolute")

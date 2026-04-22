@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
+from .preprocess import point_acceleration, point_motion
 from .rao import RAOSet
 
 MOTION_NAMES = ("surge", "sway", "heave", "roll", "pitch", "yaw")
@@ -33,35 +34,21 @@ def acceleration_from_displacement(raoset: RAOSet) -> RAOSet:
 
 
 def derive_point_displacement(raoset: RAOSet, x: float, y: float, z: float, resp_name: str = "point") -> RAOSet:
-    """Derive linearized point displacement RAO at position r=(x,y,z) from 6DoF motion RAOs.
+    """Backward-compatible wrapper for deriving point motions in relative mode."""
+    return point_motion(
+        raoset,
+        point=(float(x), float(y), float(z)),
+        point_mode="relative",
+        point_name=resp_name,
+    )
 
-    u_point = u + theta x r
-    """
-    rao = raoset.rao
-    resp = raoset.dataset.coords["resp"].astype(str)
 
-    needed = set(MOTION_NAMES)
-    found = set(resp.values.tolist())
-    missing = sorted(needed - found)
-    if missing:
-        raise ValueError(f"missing required motion responses: {missing}")
-
-    surge = rao.sel(resp="surge")
-    sway = rao.sel(resp="sway")
-    heave = rao.sel(resp="heave")
-    roll = rao.sel(resp="roll")
-    pitch = rao.sel(resp="pitch")
-    yaw = rao.sel(resp="yaw")
-
-    u_px = surge + pitch * z - yaw * y
-    u_py = sway + yaw * x - roll * z
-    u_pz = heave + roll * y - pitch * x
-
-    point = xr.concat([u_px, u_py, u_pz], dim="resp")
-    point = point.assign_coords(resp=("resp", [f"{resp_name}_x", f"{resp_name}_y", f"{resp_name}_z"]))
-
-    ds = xr.Dataset({"rao": point}, attrs=raoset.dataset.attrs)
-    for cname, c in raoset.dataset.coords.items():
-        if cname != "resp" and cname in ds.dims:
-            ds = ds.assign_coords({cname: c})
-    return RAOSet(ds)
+def derive_point_acceleration(raoset: RAOSet, x: float, y: float, z: float, resp_name: str = "point") -> RAOSet:
+    """Backward-compatible wrapper for deriving point accelerations in relative mode."""
+    return point_acceleration(
+        raoset,
+        point=(float(x), float(y), float(z)),
+        point_mode="relative",
+        point_name=resp_name,
+        derive_accelerations=True,
+    )

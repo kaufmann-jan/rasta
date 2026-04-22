@@ -58,6 +58,7 @@ def test_rotation_component_is_scaled_to_rad() -> None:
 def test_internal_load_mapping_to_my() -> None:
     rs = read_hydrostar_rao(FIXTURES / "Mys1.rao")
     assert list(rs.dataset.coords["resp"].values) == ["My"]
+    assert rs.dataset.attrs["hydrostar_body_id"] == 1
 
 
 def test_distributed_loads_concat_along_x() -> None:
@@ -70,6 +71,8 @@ def test_distributed_loads_concat_along_x() -> None:
     x_vals = rs.dataset.coords["x"].values
     assert np.all(np.diff(x_vals) > 0.0)
     assert np.allclose(x_vals, np.arange(13.5, 121.5 + 1e-12, 13.5))
+    assert "body_id" in rs.dataset.coords
+    assert np.all(rs.dataset.coords["body_id"].values == 1)
 
 
 def test_multi_file_concat_channels() -> None:

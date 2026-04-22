@@ -46,6 +46,7 @@ class _ParsedHydroStar:
     phase_deg: np.ndarray
     speed_m_s: float | None
     depth_m: float | None
+    body_id: int | None
     x_ref: float | None
     y_ref: float | None
     z_ref: float | None
@@ -88,6 +89,7 @@ def _parse_hydrostar_file(path: str | Path) -> _ParsedHydroStar:
     headings_deg: np.ndarray | None = None
     speed_m_s: float | None = None
     depth_m: float | None = None
+    body_id: int | None = None
     x_ref: float | None = None
     y_ref: float | None = None
     z_ref: float | None = None
@@ -127,15 +129,16 @@ def _parse_hydrostar_file(path: str | Path) -> _ParsedHydroStar:
                     speed_m_s = _extract_float(rf"Forward speed\s*:\s*({_FLOAT_RE})", line)
                 elif "Waterdepth" in line:
                     depth_m = _extract_float(rf"Waterdepth\s*:\s*({_FLOAT_RE})", line)
-                elif "Reference point of body 1" in line:
+                elif "Reference point of body" in line:
                     match = re.search(
-                        rf"Reference point of body 1:\s*\(\s*({_FLOAT_RE})\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s*\)",
+                        rf"^#\s*Reference point of body\s+(\d+)\s*:\s*\(\s*({_FLOAT_RE})\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s*\)",
                         line,
                     )
                     if match:
-                        x_ref = float(match.group(1))
-                        y_ref = float(match.group(2))
-                        z_ref = float(match.group(3))
+                        body_id = int(match.group(1))
+                        x_ref = float(match.group(2))
+                        y_ref = float(match.group(3))
+                        z_ref = float(match.group(4))
                 continue
 
             if nbheading is None:
@@ -185,6 +188,7 @@ def _parse_hydrostar_file(path: str | Path) -> _ParsedHydroStar:
         phase_deg=np.asarray(phase_rows, dtype=float),
         speed_m_s=speed_m_s,
         depth_m=depth_m,
+        body_id=body_id,
         x_ref=x_ref,
         y_ref=y_ref,
         z_ref=z_ref,
@@ -227,6 +231,14 @@ def _build_dataset(parsed: _ParsedHydroStar, resp_name: str) -> xr.Dataset:
         ds = ds.assign_coords(speed=float(parsed.speed_m_s))
     if parsed.depth_m is not None:
         ds = ds.assign_coords(depth=float(parsed.depth_m))
+    if parsed.body_id is not None:
+        ds.attrs["hydrostar_body_id"] = int(parsed.body_id)
+    if parsed.x_ref is not None:
+        ds.attrs["xref"] = float(parsed.x_ref)
+    if parsed.y_ref is not None:
+        ds.attrs["yref"] = float(parsed.y_ref)
+    if parsed.z_ref is not None:
+        ds.attrs["zref"] = float(parsed.z_ref)
 
     return ds
 
@@ -349,6 +361,7 @@ def read_hydrostar_distributed_loads(paths: Iterable[str | Path], *, resp: str |
         # Keep full 3D reference-point data aligned with x.
         ds = ds.assign_coords(y=("x", np.array([float(item.y_ref)], dtype=float)))
         ds = ds.assign_coords(z=("x", np.array([float(item.z_ref)], dtype=float)))
+        ds = ds.assign_coords(body_id=("x", np.array([int(item.body_id)], dtype=int)))
 
         datasets.append(ds)
 
