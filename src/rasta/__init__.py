@@ -2,7 +2,13 @@
 
 from .rao import RAOSet
 from .operational import make_operational_profile, validate_operational_profile
-from .preprocess import point_acceleration, point_motion
+from .preprocess import (
+    incident_wave_elevation,
+    point_acceleration,
+    point_motion,
+    relative_vertical_motion,
+    wave_number,
+)
 from .scatter import (
     limit_scatter_hs,
     load_iacs_rec34_rev2_scatter,
@@ -38,6 +44,9 @@ __all__ = [
     "validate_operational_profile",
     "point_motion",
     "point_acceleration",
+    "wave_number",
+    "incident_wave_elevation",
+    "relative_vertical_motion",
     "bretschneider",
     "pierson_moskowitz",
     "jonswap",

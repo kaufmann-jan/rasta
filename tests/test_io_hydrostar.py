@@ -42,6 +42,9 @@ def test_read_single_heave_file() -> None:
     assert rs.dataset.attrs["source"] == "HydroStar"
     assert rs.dataset.attrs["hydrostar_raotype"] == "MOTION"
     assert rs.dataset.attrs["hydrostar_component"] == "3"
+    assert rs.dataset.attrs["x_wave_ref"] == pytest.approx(67.8140)
+    assert rs.dataset.attrs["y_wave_ref"] == pytest.approx(0.0)
+    assert rs.dataset.attrs["z_wave_ref"] == pytest.approx(-0.0001)
 
 
 def test_rotation_component_is_scaled_to_rad() -> None:

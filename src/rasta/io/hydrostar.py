@@ -46,6 +46,9 @@ class _ParsedHydroStar:
     phase_deg: np.ndarray
     speed_m_s: float | None
     depth_m: float | None
+    x_wave_ref: float | None
+    y_wave_ref: float | None
+    z_wave_ref: float | None
     body_id: int | None
     x_ref: float | None
     y_ref: float | None
@@ -89,6 +92,9 @@ def _parse_hydrostar_file(path: str | Path) -> _ParsedHydroStar:
     headings_deg: np.ndarray | None = None
     speed_m_s: float | None = None
     depth_m: float | None = None
+    x_wave_ref: float | None = None
+    y_wave_ref: float | None = None
+    z_wave_ref: float | None = None
     body_id: int | None = None
     x_ref: float | None = None
     y_ref: float | None = None
@@ -129,6 +135,15 @@ def _parse_hydrostar_file(path: str | Path) -> _ParsedHydroStar:
                     speed_m_s = _extract_float(rf"Forward speed\s*:\s*({_FLOAT_RE})", line)
                 elif "Waterdepth" in line:
                     depth_m = _extract_float(rf"Waterdepth\s*:\s*({_FLOAT_RE})", line)
+                elif "Ref.pt incident wave" in line:
+                    match = re.search(
+                        rf"Ref\.pt incident wave\s*:\s*\(\s*({_FLOAT_RE})\s+({_FLOAT_RE})\s*\)",
+                        line,
+                    )
+                    if match:
+                        x_wave_ref = float(match.group(1))
+                        y_wave_ref = 0.0
+                        z_wave_ref = float(match.group(2))
                 elif "Reference point of body" in line:
                     match = re.search(
                         rf"^#\s*Reference point of body\s+(\d+)\s*:\s*\(\s*({_FLOAT_RE})\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s*\)",
@@ -188,6 +203,9 @@ def _parse_hydrostar_file(path: str | Path) -> _ParsedHydroStar:
         phase_deg=np.asarray(phase_rows, dtype=float),
         speed_m_s=speed_m_s,
         depth_m=depth_m,
+        x_wave_ref=x_wave_ref,
+        y_wave_ref=y_wave_ref,
+        z_wave_ref=z_wave_ref,
         body_id=body_id,
         x_ref=x_ref,
         y_ref=y_ref,
@@ -239,6 +257,12 @@ def _build_dataset(parsed: _ParsedHydroStar, resp_name: str) -> xr.Dataset:
         ds.attrs["yref"] = float(parsed.y_ref)
     if parsed.z_ref is not None:
         ds.attrs["zref"] = float(parsed.z_ref)
+    if parsed.x_wave_ref is not None:
+        ds.attrs["x_wave_ref"] = float(parsed.x_wave_ref)
+    if parsed.y_wave_ref is not None:
+        ds.attrs["y_wave_ref"] = float(parsed.y_wave_ref)
+    if parsed.z_wave_ref is not None:
+        ds.attrs["z_wave_ref"] = float(parsed.z_wave_ref)
 
     return ds
 
