@@ -142,8 +142,8 @@ def _parse_hydrostar_file(path: str | Path) -> _ParsedHydroStar:
                     )
                     if match:
                         x_wave_ref = float(match.group(1))
-                        y_wave_ref = 0.0
-                        z_wave_ref = float(match.group(2))
+                        y_wave_ref = float(match.group(2))
+                        z_wave_ref = 0.0
                 elif "Reference point of body" in line:
                     match = re.search(
                         rf"^#\s*Reference point of body\s+(\d+)\s*:\s*\(\s*({_FLOAT_RE})\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s*\)",
