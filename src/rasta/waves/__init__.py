@@ -5,11 +5,13 @@ from .components import (
     read_wave_components_csv,
     wave_elevation,
     write_wave_components_csv,
+    write_wave_components_waves_dict,
 )
 
 __all__ = [
     "generate_wave_components",
     "wave_elevation",
     "write_wave_components_csv",
+    "write_wave_components_waves_dict",
     "read_wave_components_csv",
 ]

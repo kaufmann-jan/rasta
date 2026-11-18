@@ -36,6 +36,7 @@ from .waves import (
     read_wave_components_csv,
     wave_elevation,
     write_wave_components_csv,
+    write_wave_components_waves_dict,
 )
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "generate_wave_components",
     "wave_elevation",
     "write_wave_components_csv",
+    "write_wave_components_waves_dict",
     "read_wave_components_csv",
     "read_scatter_csv",
     "write_scatter_csv",

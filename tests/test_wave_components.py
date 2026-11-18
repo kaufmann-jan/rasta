@@ -12,6 +12,7 @@ from rasta.waves import (
     read_wave_components_csv,
     wave_elevation,
     write_wave_components_csv,
+    write_wave_components_waves_dict,
 )
 
 
@@ -131,6 +132,47 @@ def test_single_component_kwargs_and_metadata():
     assert np.isnan(ds.attrs["T_beat"])
     assert json.loads(ds.attrs["spectrum_kwargs"]) == {"gamma": 5}
     assert ds.attrs["hs_discrete"] == pytest.approx(2)
+
+
+def test_waves_dict_defaults_and_component_values(tmp_path):
+    ds = xr.Dataset(
+        {"amplitude": ("component", [0.75, 0.25]),
+         "wavelength": ("component", [100.0, 50.0]),
+         "phase": ("component", [0.0, 1.5])},
+        attrs={"depth": 30.0},
+    )
+    original = ds.copy(deep=True)
+    path = tmp_path / "wavesDict"
+    write_wave_components_waves_dict(ds, path)
+    assert path.read_text() == (
+        "Airy\n{\n    amplitude 0.75;\n    angle 0;\n"
+        "    length 100;\n    phase 0;\n}\n\n"
+        "Airy\n{\n    amplitude 0.25;\n    angle 0;\n"
+        "    length 50;\n    phase 1.5;\n}\n"
+    )
+    xr.testing.assert_identical(ds, original)
+    write_wave_components_waves_dict(
+        ds.isel(component=slice(0, 1)), path, wave_type="Stokes5", angle=45,
+        depth=30, float_format=".1f",
+    )
+    assert path.read_text() == (
+        "Stokes5\n{\n    amplitude 0.8;\n    angle 45.0;\n"
+        "    depth 30.0;\n    length 100.0;\n    phase 0.0;\n}\n"
+    )
+
+
+def test_waves_dict_generated_values_preserve_precision(tmp_path):
+    ds = generate_wave_components(hs=2, tp=8, n_components=3, seed=42)
+    path = tmp_path / "wavesDict"
+    write_wave_components_waves_dict(ds, path)
+    blocks = path.read_text().strip().split("\n\n")
+    assert len(blocks) == 3
+    for i, block in enumerate(blocks):
+        entries = dict(line.strip().rstrip(";").split() for line in block.splitlines()[2:-1])
+        assert float(entries["amplitude"]) == ds.amplitude.values[i]
+        assert float(entries["length"]) == ds.wavelength.values[i]
+        assert float(entries["phase"]) == ds.phase.values[i]
+        assert "depth" not in entries
 
 
 @pytest.mark.parametrize("kwargs", [

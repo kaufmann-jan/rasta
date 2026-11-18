@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+import re
 import warnings
 
 import numpy as np
@@ -216,6 +217,61 @@ def write_wave_components_csv(components: xr.Dataset, path: str | Path) -> None:
         writer.writerow(("component", *_CSV_FIELDS))
         writer.writerows(zip(components.component.values,
                              *(components[name].values for name in _CSV_FIELDS)))
+
+
+def write_wave_components_waves_dict(
+    components: xr.Dataset,
+    path: str | Path,
+    *,
+    wave_type: str = "Airy",
+    angle: float = 0.0,
+    depth: float | None = None,
+    float_format: str = ".17g",
+) -> None:
+    """Write one wavesDict block per component, matching the supplied format.
+
+    Each block is named by ``wave_type`` (default ``Airy``) and contains
+    amplitude [m], angle, length [m] from ``wavelength``, and phase [rad].
+    Angle is shared by all components and written unchanged in the target
+    generator's angle convention. Phases are copied without sign conversion.
+
+    Depth [m] is included in every block only when explicitly supplied here;
+    the dataset's depth attribute is not used. Wavelengths are exported as
+    stored, so generate components at the desired depth before exporting.
+
+    Example::
+
+        write_wave_components_waves_dict(components, "wavesDict", depth=10.0)
+    """
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", wave_type):
+        raise ValueError("wave_type must be a dictionary identifier")
+    if not np.isfinite(angle):
+        raise ValueError("angle must be finite")
+    if depth is not None and (not np.isfinite(depth) or depth <= 0):
+        raise ValueError("depth must be positive and finite when provided")
+    arrays = {}
+    for name in ("amplitude", "wavelength", "phase"):
+        if name not in components or components[name].dims != ("component",):
+            raise ValueError(f"{name} must have dimension 'component'")
+        values = np.asarray(components[name].values, dtype=float)
+        if not np.isfinite(values).all():
+            raise ValueError(f"{name} must contain finite values")
+        if name != "phase" and np.any(values <= 0):
+            raise ValueError(f"{name} must contain positive values")
+        arrays[name] = values
+    blocks = []
+    for amplitude, length, phase in zip(
+        arrays["amplitude"], arrays["wavelength"], arrays["phase"]
+    ):
+        entries = [("amplitude", amplitude), ("angle", angle)]
+        if depth is not None:
+            entries.append(("depth", depth))
+        entries.extend((("length", length), ("phase", phase)))
+        lines = [wave_type, "{"]
+        lines.extend(f"    {key} {format(value, float_format)};" for key, value in entries)
+        lines.append("}")
+        blocks.append("\n".join(lines))
+    Path(path).write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
 
 
 def read_wave_components_csv(path: str | Path) -> xr.Dataset:
