@@ -31,9 +31,19 @@ from .spectra import (
 from .stats.longterm import longterm_response_cycle_counts, longterm_statistics
 from .stats.response_spectrum import compute_response_spectrum, extend_symmetric_raos
 from .stats.shortterm import shortterm_statistics
+from .waves import (
+    generate_wave_components,
+    read_wave_components_csv,
+    wave_elevation,
+    write_wave_components_csv,
+)
 
 __all__ = [
     "RAOSet",
+    "generate_wave_components",
+    "wave_elevation",
+    "write_wave_components_csv",
+    "read_wave_components_csv",
     "read_scatter_csv",
     "write_scatter_csv",
     "write_scatter_tab",
