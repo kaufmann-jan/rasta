@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import xarray as xr
 
 from rasta.io import read_hydrostar_rao
 from rasta.rao import RAOSet
+from rasta.spectra import jonswap
 from rasta.stats.response_spectrum import compute_response_spectrum, extend_symmetric_raos
 from rasta.validation import REQUIRED_ATTRS
 
@@ -33,6 +35,38 @@ def test_directional_spreading_option_works() -> None:
 
     assert uni["S_r"].dims == spread["S_r"].dims
     assert np.all(np.isfinite(spread["S_r"].values))
+
+
+@pytest.mark.parametrize("spreading", [None, "longcrested", "unidirectional", "LONGCRESTED", "Unidirectional"])
+@pytest.mark.parametrize("single_heading", [False, True])
+def test_unidirectional_selects_one_heading(spreading, single_heading) -> None:
+    freq = np.array([0.5, 1.0, 1.5])
+    direction = [0.0] if single_heading else [0.0, 90.0, 180.0, 270.0]
+    amplitudes = [2.0 + 1j] if single_heading else [2.0 + 1j, 100.0, 200.0, 300.0]
+    data = np.repeat(np.asarray(amplitudes).reshape(1, -1, 1), freq.size, axis=2)
+    rs = RAOSet(xr.Dataset(
+        {"rao": (("resp", "dir", "freq"), data.astype(complex))},
+        coords={"resp": ["heave"], "dir": direction, "freq": freq},
+        attrs=dict(REQUIRED_ATTRS),
+    ))
+    omega = xr.DataArray(freq, dims="freq", coords={"freq": freq})
+    # 359 degrees must select 0 degrees across the circular boundary.
+    out = compute_response_spectrum(
+        rs, resp="heave", hs=2.0, tp=8.0, mean_dir=359.0,
+        spreading=spreading, omega_grid=omega,
+    )
+    expected = 5.0 * jonswap(omega, hs=2.0, tp=8.0)
+    np.testing.assert_allclose(out.S_r.sel(resp="heave").values, expected.values)
+    assert out.S_r.dims == ("resp", "freq")
+    assert out.attrs["spreading"] == ("none" if spreading is None else spreading)
+
+
+def test_default_spreading_remains_cos2s_full() -> None:
+    rs = read_hydrostar_rao("tests/hydrostar/heave.rao")
+    kwargs = dict(resp="heave", hs=3.0, tp=8.0, mean_dir=180.0)
+    default = compute_response_spectrum(rs, **kwargs)
+    explicit = compute_response_spectrum(rs, spreading="cos2s_full", **kwargs)
+    xr.testing.assert_identical(default, explicit)
 
 
 def test_symmetry_extension_even_and_odd() -> None:

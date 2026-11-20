@@ -230,7 +230,7 @@ def _build_directional_spreading(
             dir_unit="deg",
         )
 
-    raise ValueError("spreading must be one of: cos2s_full, cosN_half, mitsuyasu")
+    raise ValueError("spreading must be one of: cos2s_full, cosN_half, mitsuyasu, longcrested, unidirectional (or None)")
 
 
 def compute_response_spectrum(
@@ -252,6 +252,14 @@ def compute_response_spectrum(
     rao_tail_extrapolation: str = "zero_at_omega_max",
 ) -> xr.Dataset:
     """Compute response spectrum S_r(omega) for selected response channels.
+
+    ``spreading`` defaults to ``"cos2s_full"``. Use ``"longcrested"``,
+    ``"unidirectional"`` (case insensitive), or ``None`` for no spreading:
+    S_r = |RAO|**2 * S_wave at the available heading nearest ``mean_dir``
+    using circular angular distance. No directional integration is performed.
+    This also supports RAO datasets containing only one heading, for example
+    when comparing with a unidirectional CFD simulation. ``spreading_kwargs``
+    has no effect in these modes.
     
     compute_response_spectrum uses one frequency integration grid (freq, rad/s). You control it in two ways:
     
@@ -330,7 +338,7 @@ def compute_response_spectrum(
 
     mean_dir_mod = float(mean_dir) % 360.0
 
-    if spreading is None:
+    if spreading is None or spreading.lower() in {"longcrested", "unidirectional"}:
         dir_vals = np.asarray(rao_w.coords["dir"].values, dtype=float)
         idx = int(np.argmin(np.abs((dir_vals - mean_dir_mod + 180.0) % 360.0 - 180.0)))
         h_mean = rao_w.isel(dir=idx)
